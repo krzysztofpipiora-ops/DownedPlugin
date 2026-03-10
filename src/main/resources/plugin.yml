@@ -1,0 +1,4 @@
+name: DownedPlugin
+version: 1.0
+main: me.twojanazwa.DownedPlugin
+api-version: 1.20 # lub Twoja wersja

@@ -32,50 +32,58 @@ public class DownedPlugin extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("Plugin na powalenia zostal wlaczony!");
+        getLogger().info("Plugin na powalenia (Niesmiertelnosc+) wlaczony!");
     }
 
     @EventHandler
     public void onPlayerDamage(EntityDamageEvent event) {
         if (!(event.getEntity() instanceof Player)) return;
         Player player = (Player) event.getEntity();
+        UUID uuid = player.getUniqueId();
 
+        // 1. Jesli gracz jest juz powalony, nie moze dostac zadnych obrazen
+        if (downedPlayers.containsKey(uuid)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        // 2. Obsluga momentu "smierci" (wejscia w stan powalenia)
         if (player.getHealth() - event.getFinalDamage() <= 0) {
             if (hasTotem(player)) return;
 
-            if (!downedPlayers.containsKey(player.getUniqueId())) {
-                event.setCancelled(true);
-                enterDownedState(player);
-            }
+            event.setCancelled(true);
+            enterDownedState(player);
         }
     }
 
     private void enterDownedState(Player player) {
         UUID uuid = player.getUniqueId();
-        player.setHealth(2.0);
+        player.setHealth(2.0); // Zostawiamy 1 serce wizualnie
         player.setSwimming(true);
         player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 1200, 1));
         
         downedPlayers.put(uuid, System.currentTimeMillis() + 60000);
 
+        // Zadanie: Smierc po dokladnie 60 sekundach
         BukkitTask deathTask = new BukkitRunnable() {
             @Override
             public void run() {
                 if (downedPlayers.containsKey(uuid)) {
                     downedPlayers.remove(uuid);
-                    player.setHealth(0);
-                    player.sendMessage("§cWykrwawiles sie...");
+                    player.setHealth(0); // Tutaj gracz naprawde ginie
+                    player.sendMessage("§cWykrwawiles sie!");
                 }
             }
-        }.runTaskLater(this, 1200L);
+        }.runTaskLater(this, 1200L); // 60s * 20 tickow
         
         deathTasks.put(uuid, deathTask);
-        player.sendMessage("§cZostales powalony! Masz 60s na ratunek.");
+        player.sendMessage("§cZostales powalony! Jestes niesmiertelny przez 60s, czekaj na ratunek.");
     }
 
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
         if (downedPlayers.containsKey(event.getPlayer().getUniqueId())) {
+            // Blokada chodzenia, mozna tylko ruszac glowa
             if (event.getFrom().getX() != event.getTo().getX() || event.getFrom().getZ() != event.getTo().getZ()) {
                 event.setTo(event.getFrom());
             }
@@ -117,7 +125,7 @@ public class DownedPlugin extends JavaPlugin implements Listener {
                     return;
                 }
 
-                progress += 0.02; // 0.02 co 2 ticki = 10s (50 krokow)
+                progress += 0.02; 
                 bar.setProgress(Math.min(progress, 1.0));
 
                 if (progress >= 1.0) {

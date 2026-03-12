@@ -8,10 +8,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerItemConsumeEvent;
-import org.bukkit.event.player.PlayerMoveEvent;
-import org.bukkit.event.player.PlayerToggleSneakEvent;
+import org.bukkit.event.player.*;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -36,16 +33,32 @@ public class DownedPlugin extends JavaPlugin implements Listener {
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
         
-        // Zadanie odswiezajace animacje lezenia (Gliding)
+        // Co 5 ticków wymuszamy na wszystkich powalonych stan "Gliding" (leżenie)
         new BukkitRunnable() {
             @Override
             public void run() {
                 for (UUID uuid : downedPlayers.keySet()) {
                     Player p = Bukkit.getPlayer(uuid);
-                    if (p != null) p.setGliding(true);
+                    if (p != null && p.isOnline()) {
+                        p.setGliding(true);
+                    }
                 }
             }
         }.runTaskTimer(this, 0L, 5L);
+    }
+
+    // NAPRAWA BŁĘDU: Przywracanie stanu po powrocie na serwer
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        if (downedPlayers.containsKey(player.getUniqueId())) {
+            player.sendMessage("§cWciaz jestes powalony!");
+            player.setGliding(true);
+            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 2000, 1));
+            
+            // Reaktywujemy licznik smierci (ustawiamy na pozostały czas lub restartujemy minutę)
+            startDeathTimer(player);
+        }
     }
 
     @EventHandler
@@ -69,20 +82,29 @@ public class DownedPlugin extends JavaPlugin implements Listener {
         player.setGliding(true);
         player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 2000, 1));
         downedPlayers.put(uuid, System.currentTimeMillis() + 60000);
+        startDeathTimer(player);
+        player.sendMessage("§cZostales powalony!");
+    }
 
-        deathTasks.put(uuid, new BukkitRunnable() {
+    private void startDeathTimer(Player player) {
+        UUID uuid = player.getUniqueId();
+        // Anulujemy stary licznik jeśli istnieje
+        if (deathTasks.containsKey(uuid)) deathTasks.get(uuid).cancel();
+
+        BukkitTask task = new BukkitRunnable() {
             @Override
             public void run() {
                 if (downedPlayers.containsKey(uuid)) {
                     downedPlayers.remove(uuid);
-                    player.setHealth(0);
+                    Player p = Bukkit.getPlayer(uuid);
+                    if (p != null) p.setHealth(0);
                 }
             }
-        }.runTaskLater(this, 1200L));
-        player.sendMessage("§cZostales powalony!");
+        }.runTaskLater(this, 1200L);
+        deathTasks.put(uuid, task);
     }
 
-    // --- BLOKADY DLA POWALONEGO ---
+    // --- BLOKADY ---
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
         if (downedPlayers.containsKey(event.getPlayer().getUniqueId())) event.setCancelled(true);
@@ -112,10 +134,8 @@ public class DownedPlugin extends JavaPlugin implements Listener {
         Player helper = event.getPlayer();
         if (!event.isSneaking()) return;
 
-        // Obsluga noszenia i ZRZUCANIA
         handleCarryAndDrop(helper);
 
-        // Obsluga wskrzeszania
         for (Entity entity : helper.getNearbyEntities(2, 2, 2)) {
             if (entity instanceof Player && downedPlayers.containsKey(entity.getUniqueId())) {
                 startReviveProcess(helper, (Player) entity);
@@ -129,12 +149,10 @@ public class DownedPlugin extends JavaPlugin implements Listener {
         long last = lastShiftClick.getOrDefault(helper.getUniqueId(), 0L);
         
         if (now - last < 400) {
-            // Jesli juz kogos niesie - zrzuc go
             if (!helper.getPassengers().isEmpty()) {
                 helper.getPassengers().forEach(helper::removePassenger);
                 helper.sendMessage("§eZrzuciles gracza.");
             } else {
-                // Jesli nie niesie - sprobuj podniesc
                 for (Entity entity : helper.getNearbyEntities(2, 2, 2)) {
                     if (entity instanceof Player && downedPlayers.containsKey(entity.getUniqueId())) {
                         helper.addPassenger(entity);
@@ -148,6 +166,8 @@ public class DownedPlugin extends JavaPlugin implements Listener {
     }
 
     private void startReviveProcess(Player helper, Player downed) {
+        if (reviveBars.containsKey(helper.getUniqueId())) return;
+
         BossBar bar = Bukkit.createBossBar("§aWskrzeszanie: " + downed.getName(), BarColor.GREEN, BarStyle.SOLID);
         bar.addPlayer(helper);
         reviveBars.put(helper.getUniqueId(), bar);
@@ -167,6 +187,7 @@ public class DownedPlugin extends JavaPlugin implements Listener {
                 if (progress >= 1.0) {
                     finishRevive(downed);
                     bar.removeAll();
+                    reviveBars.remove(helper.getUniqueId());
                     this.cancel();
                 }
             }
